@@ -15,7 +15,7 @@ Run the rule tests with `python -m pytest -q`.
 
 ## Share link (daily HTML)
 
-After the NSE close, GitHub Actions rebuilds a static page of the watchlist scan:
+After the NSE close, GitHub Actions rebuilds a static page of the watchlist scan. Click any row to see that stock's daily chart (the same one the app shows), its trade plan, and its checklist:
 
 **https://gauravbaldota27.github.io/nse_daily_scanner/**
 
@@ -55,6 +55,8 @@ scanner/indicators.py  RSI, ADX/DI, EMA, MACD, ATR, BB, RVOL, 20D levels
 scanner/signals.py     the six setups, status logic, trade plan
 scanner/data.py        Yahoo download, incomplete-candle split
 scanner/engine.py      ties it together for each stock and the watchlist
+scanner/chart.py       daily candlestick chart (used by the app and the share page)
+scripts/build_report.py  static HTML for GitHub Pages
 tests/test_signals.py  rule tests
 ```
 

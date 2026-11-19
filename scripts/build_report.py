@@ -13,15 +13,18 @@ from html import escape
 from pathlib import Path
 
 import pandas as pd
+from plotly.offline import get_plotlyjs_version
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from scanner import config, data as data_mod  # noqa: E402
+from scanner.chart import build_chart  # noqa: E402
 from scanner.engine import analyse, summary_table  # noqa: E402
 from scanner.signals import SETUP_LABEL, STATUS_COLOR, indicator_rows  # noqa: E402
 
 OUT = ROOT / "site" / "index.html"
+CHART_BARS = 120  # same default as the app's "Candles on chart" slider
 
 
 def _fmt(v, spec):
@@ -107,6 +110,17 @@ def _details(res, settings):
     }
 
 
+def _charts(results, settings):
+    """Plotly figure JSON per symbol. The shared template is sent once, not 50 times."""
+    charts, template = {}, None
+    for res in results:
+        fig = json.loads(build_chart(res, settings, show_bb=False, bars=CHART_BARS).to_json())
+        template = fig["layout"].pop("template", template)
+        fig["layout"].pop("height", None)  # the page sizes the chart box
+        charts[res.symbol] = fig
+    return charts, template
+
+
 def _table_rows(table: pd.DataFrame) -> list:
     rows = []
     for rec in table.to_dict(orient="records"):
@@ -142,7 +156,7 @@ def _json(payload: dict) -> str:
         if pd.isna(o):
             return None
         raise TypeError(type(o))
-    return json.dumps(payload, default=default)
+    return json.dumps(payload, default=default).replace("</", "<\\/")
 
 
 def render(payload: dict) -> str:
@@ -161,6 +175,7 @@ def render(payload: dict) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NSE Daily Scanner</title>
+<script src="https://cdn.plot.ly/plotly-{escape(payload["plotly_js"])}.min.js" charset="utf-8"></script>
 <style>
   :root {{ color-scheme: light; }}
   body {{ font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -172,6 +187,9 @@ def render(payload: dict) -> str:
   .chip {{ display: inline-block; border-radius: 10px; padding: 2px 8px; margin: 0 6px 6px 0;
            color: #fff; font-size: 12px; font-weight: 600; }}
   main {{ display: grid; grid-template-columns: 1.4fr 0.9fr; gap: 12px; padding: 12px; }}
+  .left {{ display: flex; flex-direction: column; gap: 12px; min-width: 0; }}
+  #chart {{ height: 460px; }}
+  .chart-title {{ font-weight: 700; font-size: 14px; margin: 2px 4px 4px; }}
   @media (max-width: 960px) {{ main {{ grid-template-columns: 1fr; }} }}
   .card {{ background: #fff; border-radius: 10px; padding: 10px; overflow: auto;
            box-shadow: 0 1px 2px rgba(0,0,0,.06); }}
@@ -205,6 +223,11 @@ def render(payload: dict) -> str:
   <div class="chips">{chips}</div>
 </header>
 <main>
+  <div class="left">
+  <section class="card" style="overflow:hidden">
+    <div class="chart-title" id="chart-title"></div>
+    <div id="chart"></div>
+  </section>
   <section class="card">
     <table id="scan">
       <thead>
@@ -218,6 +241,7 @@ def render(payload: dict) -> str:
     </table>
     {failed_html}
   </section>
+  </div>
   <section class="card" id="detail">
     <div class="muted">Click a symbol for the trade plan and checklist.</div>
   </section>
@@ -250,10 +274,23 @@ function renderTable() {{
     </tr>`).join("");
 }}
 
+function drawChart(sym) {{
+  const fig = DATA.charts[sym];
+  const box = document.getElementById("chart");
+  document.getElementById("chart-title").textContent = sym + " · daily";
+  if (!fig || !window.Plotly) {{
+    box.innerHTML = '<p class="muted">Chart unavailable.</p>';
+    return;
+  }}
+  const layout = Object.assign({{}}, fig.layout, {{ template: DATA.template, autosize: true }});
+  Plotly.react(box, fig.data, layout, {{ responsive: true, displaylogo: false }});
+}}
+
 function show(i) {{
   document.querySelectorAll("#scan tbody tr").forEach((tr, j) => tr.classList.toggle("sel", j === i));
   const r = DATA.rows[i];
   const d = DATA.details[r.Symbol];
+  drawChart(r.Symbol);
   const conds = (d.conds || []).map(c => `
     <tr>
       <td class="tick ${{c.bull_ok ? "ok-bull" : (c.bull_ok === false ? "no" : "")}}">${{tick(c.bull_ok)}}</td>
@@ -314,6 +351,8 @@ def main():
         "rows": _table_rows(table),
         "details": {r.symbol: _details(r, settings) for r in results},
     }
+    payload["charts"], payload["template"] = _charts(results, settings)
+    payload["plotly_js"] = get_plotlyjs_version()
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(render(payload), encoding="utf-8")
     print(f"Wrote {OUT} ({len(results)} stocks, failed={failed})")
